@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Prompt Maxxer
+GenericName=Dictation
+Comment=Push-to-talk dictation, recognised on your own machine
+Exec=@BIN@/prompt-maxxer --settings
+Icon=prompt-maxxer
+Terminal=false
+Categories=Utility;Accessibility;
+Keywords=dictation;speech;whisper;voice;
+StartupNotify=false

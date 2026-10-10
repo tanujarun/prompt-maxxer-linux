@@ -1,0 +1,3 @@
+# Lets members of the 'input' group create the virtual keyboard Prompt Maxxer
+# uses when `hotkey.suppress` is on (see engine/prompt_maxxer/hotkey.py).
+KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"

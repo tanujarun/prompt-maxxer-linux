@@ -1,0 +1,37 @@
+[project]
+name = "prompt-maxxer-engine"
+version = "0.1.0"
+description = "Prompt Maxxer dictation engine for Linux/Wayland - hotkey, capture, ASR and injection hot path"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26",
+    "sounddevice>=0.4.6",
+    "soxr>=0.5.0",
+    "faster-whisper>=1.1.0",
+    "websockets>=12.0",
+    # Reads /dev/input for the push-to-talk key. Builds from source against the
+    # kernel headers (linux-api-headers, gcc).
+    "evdev>=1.7",
+]
+
+[project.optional-dependencies]
+cuda = [
+    # CTranslate2 needs the CUDA 12 builds of these, and the system's CUDA is
+    # newer, so they come from NVIDIA's wheels. cuda_paths.py loads them. No
+    # CUDA toolkit install and no nvcc are required.
+    "nvidia-cublas-cu12",
+    "nvidia-cudnn-cu12>=9.0",
+    "nvidia-cuda-nvrtc-cu12",
+]
+
+[project.scripts]
+prompt-maxxer-engine = "prompt_maxxer.__main__:main"
+
+# Only the engine package is installable. packaging/ holds the PyInstaller
+# build files, and without this setuptools refuses to guess between the two.
+[tool.setuptools.packages.find]
+include = ["prompt_maxxer*"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
