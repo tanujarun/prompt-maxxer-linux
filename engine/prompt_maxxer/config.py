@@ -46,9 +46,10 @@ class HotkeyConfig:
     label: str = "Right Ctrl"
     # Swallow the key so other applications never see it while it is bound.
     # This grabs every keyboard exclusively and re-emits the other keys through
-    # a virtual keyboard (see hotkey.py). Off by default because a grabbed
-    # keyboard stops driving its caps-lock LED; turn it on for a key that does
-    # something on its own, such as Right Alt (AltGr), a media key or F13.
+    # a virtual keyboard (see hotkey.py). Keep this off for Right Ctrl: passive
+    # input avoids keyboard takeover races and keeps caps-lock LEDs working.
+    # Turn it on only for a key that does something on its own, such as
+    # Right Alt (AltGr), a media key or F13.
     suppress: bool = False
 
 

@@ -137,16 +137,21 @@ Where things live:
 ### Swallowing the key
 
 By default the push-to-talk key is read passively: it also reaches the focused
-window. For Right Ctrl, that does nothing. For a key that does something on its
-own — Right Alt (AltGr), an F-key, a media key — set `hotkey.suppress` to `true`.
+window. A lone Right Ctrl press normally does nothing; keep `hotkey.suppress`
+`false` for it. Right Ctrl still reaches the focused app and participates in
+shortcuts if you press other keys while holding it. For a key that does something
+on its own — Right Alt (AltGr), an F-key, a media key — set `hotkey.suppress` to `true`.
 The engine then grabs each keyboard exclusively and re-emits every other key
 through a virtual keyboard it creates with uinput, so only the push-to-talk key is
-swallowed. Two things to know:
+swallowed. Things to know:
 
 - A grab belongs to the open file, so the kernel releases it the instant the engine
   exits, however it exits. A crash cannot leave a keyboard captured.
 - A grabbed keyboard stops driving its own caps-lock LED. This is why it is off by
   default.
+- Taking over a keyboard requires separate state-check and grab calls. The engine
+  checks again after virtual-device creation, but passive mode avoids the takeover
+  entirely. Prefer it when your push-to-talk key does not need swallowing.
 
 ### Troubleshooting
 
@@ -160,6 +165,7 @@ swallowed. Two things to know:
 | Wrong microphone | Set `audio.device` in the config file. |
 | Running on the CPU unexpectedly | The CUDA libraries are missing from the venv; re-run `./install.sh --no-system`. |
 | No tray icon | Your bar needs a StatusNotifier tray; or use `prompt-maxxer --settings`. |
+| Super seems permanently held; typing launches window shortcuts | Set `hotkey.suppress` to `false` and restart Prompt Maxxer. Right Ctrl dictation continues to work. See the [keyboard takeover bug report](docs/keyboard-takeover-bug.md). |
 
 Check recognition on its own, with no app and no microphone:
 
@@ -218,9 +224,12 @@ minus the pill.
 
 **The key reader** (`engine/prompt_maxxer/hotkey.py`) never runs callbacks on the
 thread that reads events; it queues them for a dispatch thread. It rescans for
-keyboards every two seconds, so one plugged in later is picked up, and it only
-grabs a keyboard when no key on it is held, since a key held through a grab would
-stay down in the compositor for ever.
+keyboards every two seconds, so one plugged in later is picked up. It checks
+for held keys both before and after creating a virtual keyboard when
+suppression is enabled. It keeps a pending virtual device for retries, so a key
+pressed during creation can be released through the original keyboard before
+the grab is attempted again. Passive mode creates no virtual keyboard and takes
+no exclusive grab.
 
 **The engine's WebSocket** accepts connections only from the app's own windows. Browsers
 do not apply the same-origin policy to WebSockets, so without an Origin check any

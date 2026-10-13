@@ -15,10 +15,11 @@ Three things shape this module:
    alone is swallowed. A grab belongs to the open file, so the kernel drops it
    the moment this process exits, however it exits: a crash can never leave a
    keyboard captured.
-2. Grabbing while a key is held would leave that key stuck down in the
-   compositor, which never sees its release. So a keyboard is grabbed only once
-   every key on it is up, and any key still down is released before the grab
-   is given back.
+2. Grabbing while a key is held can leave that key stuck down in the
+   compositor, which never sees its release. Check again after creating the
+   virtual keyboard: device creation can block while the user presses a key.
+   The state check and grab are separate kernel calls, so passive mode remains
+   the safest choice. Release forwarded keys before giving a grab back.
 3. Callbacks never run on the reader thread. They run on a dispatch thread, so
    a slow observer cannot delay the next key event.
 
@@ -90,6 +91,7 @@ class _Keyboard:
         self.path = dev.path
         self.is_full = e.KEY_A in _keys_of(dev)
         self.ui: UInput | None = None
+        self._pending_ui: UInput | None = None
         self.down: set[int] = set()  # keys the compositor believes are down
 
     @property
@@ -102,13 +104,24 @@ class _Keyboard:
             return True
         if not self.is_full or self.dev.active_keys():
             return False
-        ui = UInput.from_device(self.dev, name=f"{VIRTUAL_PREFIX} ({self.dev.name})")
+        if self._pending_ui is None:
+            self._pending_ui = UInput.from_device(
+                self.dev, name=f"{VIRTUAL_PREFIX} ({self.dev.name})"
+            )
+        # UInput creation waits for the new device node (at least 100 ms with
+        # python-evdev). The earlier idle check is stale after that wait. Keep
+        # this device for the retry so every retry does not open the same gap.
+        if self.dev.active_keys():
+            log.debug("deferring keyboard grab: keys became held during device creation")
+            return False
         try:
             self.dev.grab()
         except OSError:
-            ui.close()
+            self._pending_ui.close()
+            self._pending_ui = None
             raise
-        self.ui = ui
+        self.ui = self._pending_ui
+        self._pending_ui = None
         self.down.clear()
         return True
 
@@ -123,6 +136,9 @@ class _Keyboard:
         self.ui.write_event(event)
 
     def release_grab(self) -> None:
+        if self._pending_ui is not None:
+            self._pending_ui.close()
+            self._pending_ui = None
         if self.ui is None:
             return
         # A key still down here would stay down in the compositor for ever.
