@@ -12,6 +12,7 @@ into whichever window has focus, so point it at a scratch editor first.
 
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -31,7 +32,7 @@ def check(name: str, ok, detail: str = "") -> None:
     print(f"[{'PASS' if ok else 'FAIL'}] {name}" + (f"  ({detail})" if detail else ""))
 
 
-def make_fakes(directory: Path, window_class: str, clipboard: str | None) -> Path:
+def make_fakes(directory: Path, window_class: str, clipboard: str | None, pid: int | None = None) -> Path:
     """Executables that log their arguments and stdin to <name>.log."""
     for name in ("wtype", "wl-copy"):
         script = directory / name
@@ -52,7 +53,7 @@ def make_fakes(directory: Path, window_class: str, clipboard: str | None) -> Pat
     paste.chmod(paste.stat().st_mode | stat.S_IEXEC)
 
     hyprctl = directory / "hyprctl"
-    hyprctl.write_text(f"#!/bin/sh\necho '{json.dumps({'class': window_class})}'\n")
+    hyprctl.write_text(f"#!/bin/sh\necho '{json.dumps({'class': window_class, **({'pid': pid} if pid else {})})}'\n")
     hyprctl.chmod(hyprctl.stat().st_mode | stat.S_IEXEC)
     return directory
 
@@ -62,9 +63,9 @@ def read(directory: Path, name: str) -> str:
     return path.read_text() if path.exists() else ""
 
 
-def fresh(window_class: str = "firefox", clipboard: str | None = "previous clipboard") -> Path:
+def fresh(window_class: str = "firefox", clipboard: str | None = "previous clipboard", pid: int | None = None) -> Path:
     directory = Path(tempfile.mkdtemp(prefix="prompt-maxxer-inject-"))
-    make_fakes(directory, window_class, clipboard)
+    make_fakes(directory, window_class, clipboard, pid)
     os.environ["PATH"] = f"{directory}:{ORIGINAL_PATH}"
     return directory
 
@@ -118,6 +119,23 @@ def run_fakes() -> None:
         check(f"a terminal ({terminal}) gets Ctrl+Shift+V",
               read(d, "wtype.args").split() == "-M ctrl -M shift -k v -m shift -m ctrl".split(),
               read(d, "wtype.args"))
+
+    # A launcher can give a terminal any class (Omarchy: --app-id=org.omarchy.codex), and
+    # Codex CLI answers Ctrl+V with "no image on the clipboard". The process decides.
+    for process, expected in (("kitty", "ctrl+shift+v"), ("firefox", "ctrl+v")):
+        scratch = Path(tempfile.mkdtemp(prefix="prompt-maxxer-proc-"))
+        binary = scratch / process
+        binary.symlink_to(shutil.which("sleep"))
+        child = subprocess.Popen([str(binary), "30"])
+        try:
+            d = fresh(window_class="org.omarchy.codex", pid=child.pid)
+            inj.inject(long_text, InjectConfig(restore_clipboard=False))
+            want = ("-M ctrl -M shift -k v -m shift -m ctrl" if expected == "ctrl+shift+v" else "-M ctrl -k v -m ctrl").split()
+            check(f"an unfamiliar class (org.omarchy.codex) owned by {process} gets {expected}",
+                  read(d, "wtype.args").split() == want, read(d, "wtype.args"))
+        finally:
+            child.kill()
+            child.wait()
 
     d = fresh(window_class="kitty")
     inj.inject(long_text, InjectConfig(paste_shortcut="shift+insert", restore_clipboard=False))

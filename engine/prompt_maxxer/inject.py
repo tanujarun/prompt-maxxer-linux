@@ -41,6 +41,19 @@ TERMINALS = frozenset(
     }
 )
 
+#: Executable names (/proc/<pid>/comm) of terminal emulators. A launcher can give
+#: a terminal window any class it likes - Omarchy starts agent CLIs with
+#: `--app-id=org.omarchy.codex` - so the class alone cannot say it is a terminal.
+#: The process behind the window can. comm is cut to 15 characters.
+TERMINAL_PROCESSES = frozenset(
+    {
+        "alacritty", "kitty", "foot", "footclient", "ghostty", "wezterm-gui", "wezterm",
+        "konsole", "gnome-terminal-", "gnome-terminal", "xterm", "st", "terminator",
+        "tilix", "xfce4-terminal", "urxvt", "lxterminal", "terminology", "contour",
+        "rio", "cool-retro-term", "blackbox", "kgx", "ptyxis", "sakura", "yakuake", "hyper",
+    }
+)
+
 #: Paste shortcuts as wtype arguments.
 _SHORTCUTS = {
     "ctrl+v": ["-M", "ctrl", "-k", "v", "-m", "ctrl"],
@@ -123,23 +136,47 @@ def set_clipboard_text(text: str) -> bool:
     return True
 
 
-def focused_window_class() -> str | None:
-    """The class of the window with keyboard focus, from Hyprland."""
+def focused_window() -> tuple[str | None, int | None]:
+    """The class and owning process id of the window with keyboard focus, from Hyprland."""
     hyprctl = shutil.which("hyprctl")
     if hyprctl is None:
-        return None
+        return None, None
     try:
         result = subprocess.run([hyprctl, "-j", "activewindow"], capture_output=True, timeout=1)
-        return str(json.loads(result.stdout).get("class", "")).lower() or None
+        window = json.loads(result.stdout)
+        window_class = str(window.get("class", "")).lower() or None
+        pid = window.get("pid")
+        return window_class, pid if isinstance(pid, int) and pid > 0 else None
     except (OSError, subprocess.SubprocessError, ValueError, AttributeError):
+        return None, None
+
+
+def _process_name(pid: int) -> str | None:
+    try:
+        with open(f"/proc/{pid}/comm", encoding="utf-8") as comm:
+            return comm.read().strip().lower() or None
+    except OSError:
         return None
+
+
+def focused_window_is_terminal() -> bool:
+    """Whether the focused window is a terminal, by class or by the process behind it.
+
+    The process check matters: Ctrl+V in a terminal is not paste. Codex CLI, for
+    one, reads it as "paste an image" and reports that no image is on the
+    clipboard, so a terminal with an unfamiliar class must still be recognised.
+    """
+    window_class, pid = focused_window()
+    if window_class in TERMINALS:
+        return True
+    return pid is not None and _process_name(pid) in TERMINAL_PROCESSES
 
 
 def paste_shortcut(setting: str) -> list[str]:
     """The wtype arguments that press the paste shortcut for the focused window."""
     if setting in _SHORTCUTS:
         return _SHORTCUTS[setting]
-    return _SHORTCUTS["ctrl+shift+v" if focused_window_class() in TERMINALS else "ctrl+v"]
+    return _SHORTCUTS["ctrl+shift+v" if focused_window_is_terminal() else "ctrl+v"]
 
 
 def paste_via_clipboard(
