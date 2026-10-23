@@ -51,9 +51,79 @@ class Recorder:
         self._chunks: list[np.ndarray] = []
         self._started_at = 0.0
 
+        # Stamped by every audio callback (one per block, speech or not), so a
+        # long gap means the device behind the stream is gone.
+        self._last_callback = time.monotonic()
+        self._watchdog: threading.Thread | None = None
+
     # -- lifecycle -------------------------------------------------------
 
-    def open(self) -> None:
+    # Seconds without a single callback before the stream is declared dead.
+    STALL_S = 3.0
+
+    def start_watchdog(self) -> None:
+        """Reopen the stream if the audio server restarts or the device goes.
+
+        PortAudio's ALSA backend does not recover on its own: after the server
+        or the device behind it is replaced, it loops on poll errors, never
+        calls back again and floods the log (seen after a PipeWire upgrade).
+        """
+        if self._watchdog is not None:
+            return
+        self._watchdog = threading.Thread(
+            target=self._watch, name="mic-watchdog", daemon=True
+        )
+        self._watchdog.start()
+
+    def _watch(self) -> None:
+        while True:
+            time.sleep(1.0)
+            if time.monotonic() - self._last_callback < self.STALL_S:
+                continue
+            log.warning("no audio for %.0f s; reopening the microphone", self.STALL_S)
+            try:
+                self._reopen()
+            except Exception as exc:
+                log.warning("microphone reopen failed (%s); will retry", exc)
+            # Give the new stream (or the next attempt) a full window.
+            self._last_callback = time.monotonic()
+
+    def _reopen(self) -> None:
+        stream, self._stream = self._stream, None
+        if stream is not None:
+            for step in (stream.abort, stream.close):
+                try:
+                    step()
+                except Exception:
+                    pass
+        sd._terminate()
+        sd._initialize()
+        self._open_once()
+
+    def open(self, wait_s: float = 20.0) -> None:
+        """Open the capture stream, waiting briefly for the device to appear.
+
+        Started at login, the engine can beat the audio server to it: ALSA
+        reports "No such file or directory" for a device that exists a moment
+        later. PortAudio only enumerates devices when it is initialised, so
+        each retry starts it afresh.
+        """
+        deadline = time.monotonic() + wait_s
+        while True:
+            try:
+                self._open_once()
+                self.start_watchdog()
+                return
+            except sd.PortAudioError as exc:
+                if time.monotonic() >= deadline:
+                    raise
+                log.warning("microphone not ready (%s); retrying", exc)
+                self.close()
+                time.sleep(1.0)
+                sd._terminate()
+                sd._initialize()
+
+    def _open_once(self) -> None:
         """Open the capture stream, falling back to the device default rate."""
         blocksize = int(self.target_rate * self.block_ms / 1000)
         try:
@@ -104,6 +174,7 @@ class Recorder:
     # -- audio thread ----------------------------------------------------
 
     def _callback(self, indata, frames, time_info, status) -> None:
+        self._last_callback = time.monotonic()
         if status:
             log.debug("audio status: %s", status)
 
