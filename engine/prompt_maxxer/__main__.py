@@ -117,10 +117,14 @@ def _exit_with_parent() -> None:
     import threading
 
     def watch() -> None:
+        # Read the descriptor itself, not sys.stdin.buffer: a thread parked in a
+        # BufferedReader holds its lock, and if the engine exits for any other
+        # reason, interpreter shutdown cannot take that lock back and aborts
+        # ("could not acquire lock for <_io.BufferedReader name='<stdin>'>").
         try:
-            while sys.stdin.buffer.read(4096):
+            while os.read(0, 4096):
                 pass
-        except (OSError, ValueError):
+        except OSError:
             pass
         os.kill(os.getpid(), signal.SIGTERM)
 
